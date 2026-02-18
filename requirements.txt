@@ -1,0 +1,25 @@
+streamlit>=1.31.0
+pandas>=2.0.0
+numpy>=1.24.0
+pillow>=10.0.0
+torch
+torchvision
+git+https://github.com/huggingface/transformers@82a06db03535c49aa987719ed0746a76093b1ec4
+huggingface-hub>=0.34.0,<1.0
+accelerate
+einops
+addict
+easydict
+safetensors
+paddleocr
+paddlepaddle
+opencv-python
+streamlit>=1.41
+pandas>=2.2
+numpy>=2.2
+pillow>=10.4
+paddlepaddle-gpu>=2.6.2 ; platform_system=="Windows"
+paddleocr>=2.9.0
+scikit-learn>=1.5
+opencv-python-headless
+
