@@ -3,7 +3,7 @@ import pandas as pd
 
 from table import extract_jobs_from_image, finalize_df
 from algorithm import (
-    moore_algorithm, spt_algorithm, edd_algorithm, lpt_algorithm, fcfs_algorithm,lifo_algorithm, cr_algorithm, mdd_algorithm
+    moore_algorithm, spt_algorithm, edd_algorithm, lpt_algorithm, fcfs_algorithm,lifo_algorithm, cr_algorithm, mdd_algorithm, lawler_algorithm
 )
 
 st.set_page_config(page_title="İş Sıralama Optimizasyonu", layout="centered")
@@ -125,53 +125,87 @@ if df is not None and not df.empty:
     "Last In First Out (Son Gelen İlk Çıkar) - LIFO": "LIFO",
     "Critical Ratio (Kritik Oran) - CR": "CR",
     "Modified Due Date (Modifiye Teslim Tarihi) - MDD": "MDD",
+    "Lawler Algoritması (Öncelik Kısıtlı Lmax Minimizasyonu)": "LAWLER",
+
 }
     label = st.selectbox("Algoritma", list(algo_map.keys()))
-    algo = algo_map[label]
+algo = algo_map[label]
+
+# Lawler için precedence girişleri
+precedence_edges = []
+
+if algo == "LAWLER":
+    st.markdown("### 🔗 Öncelik Kısıtları (Lawler)")
+    st.caption("Format: 1>2,2>3,4>5,4>6  (a>b demek a önce, b sonra). Job kolonundaki numaraları kullan.")
+    prec_text = st.text_input("Öncelik Kısıtları", value="1>2,2>3,4>5,4>6")
+
+    def _parse_prec(s: str):
+        s = (s or "").strip()
+        if not s:
+            return []
+        pairs = []
+        parts = [p.strip() for p in s.replace("->", ">").split(",") if p.strip()]
+        for p in parts:
+            if ">" not in p:
+                continue
+            a, b = [x.strip() for x in p.split(">", 1)]
+            if a and b:
+                pairs.append((int(a), int(b)))
+        return pairs
+
+    try:
+        precedence_edges = _parse_prec(prec_text)
+        st.write("✅ Okunan kısıtlar:", precedence_edges)
+    except Exception:
+        st.error("❌ Öncelik formatı hatalı. Örn: 1>2,2>3,4>5,4>6")
+        st.stop()
 
 
-    if st.button("🚀 Optimum Tabloyu Hesapla"):
-        try:
-            if algo == "MOORE":
-                optimal, rejected = moore_algorithm(df)
-                # Moore'u istersen final sıra olarak da gösterebiliriz:
-                final_df = pd.concat([optimal, rejected], ignore_index=True)
+if st.button("🚀 Optimum Tabloyu Hesapla"):
+    try:
+        if algo == "MOORE":
+            optimal, rejected = moore_algorithm(df)
+            final_df = pd.concat([optimal, rejected], ignore_index=True)
 
-                st.success("✅ Moore sıralaması hesaplandı!")
-                st.subheader("📌 Moore Final Sıra (Optimal + Rejected)")
-                st.dataframe(final_df, use_container_width=True)
+            st.success("✅ Moore sıralaması hesaplandı!")
+            st.subheader("📌 Moore Final Sıra (Optimal + Rejected)")
+            st.dataframe(final_df, use_container_width=True)
 
-                if not rejected.empty:
-                    st.subheader("❌ Zamanında Yetişmeyen/Çıkarılan İşler (Rejected)")
-                    st.dataframe(rejected, use_container_width=True)
-                st.stop()
-
-            elif algo == "SPT":
-                optimal, rejected = spt_algorithm(df)
-            elif algo == "EDD":
-                optimal, rejected = edd_algorithm(df)
-            elif algo == "LPT":
-                optimal, rejected = lpt_algorithm(df)
-            elif algo == "FİFO":
-                optimal, rejected = fcfs_algorithm(df)
-            elif algo == "LIFO":
-                optimal, rejected = lifo_algorithm(df)    
-            elif algo == "CR":
-                optimal, rejected = cr_algorithm(df)
-            elif algo == "MDD":
-                optimal, rejected = mdd_algorithm(df)
-
-            st.success("✅ Optimum sıralama hesaplandı!")
-            st.subheader("📌 Optimum Sıralama Tablosu")
-            st.dataframe(optimal, use_container_width=True)
-
-            if rejected is not None and not rejected.empty:
-                st.subheader("❌ Rejected")
+            if not rejected.empty:
+                st.subheader("❌ Zamanında Yetişmeyen/Çıkarılan İşler (Rejected)")
                 st.dataframe(rejected, use_container_width=True)
-            else:
-                st.info("⏱ Bu yöntemde 'rejected' üretilmez (boş döner).")
+            st.stop()
 
-        except Exception as e:
-            st.error(f"❌ Hata: {e}")
-    else:
-        st.info("Tablo yükleyin veya manuel tabloyu kaydedin. Sonra algoritma seçebilirsiniz.")
+        elif algo == "SPT":
+            optimal, rejected = spt_algorithm(df)
+        elif algo == "EDD":
+            optimal, rejected = edd_algorithm(df)
+        elif algo == "LPT":
+            optimal, rejected = lpt_algorithm(df)
+        elif algo == "FIFO":
+            optimal, rejected = fcfs_algorithm(df)
+        elif algo == "LIFO":
+            optimal, rejected = lifo_algorithm(df)
+        elif algo == "CR":
+            optimal, rejected = cr_algorithm(df)
+        elif algo == "MDD":
+            optimal, rejected = mdd_algorithm(df)
+        elif algo == "LAWLER":
+            optimal, rejected = lawler_algorithm(df, precedence_edges)
+        else:
+            raise ValueError(f"Bilinmeyen algoritma: {algo}")
+
+        st.success("✅ Optimum sıralama hesaplandı!")
+        st.subheader("📌 Optimum Sıralama Tablosu")
+        st.dataframe(optimal, use_container_width=True)
+
+        if rejected is not None and not rejected.empty:
+            st.subheader("❌ Rejected")
+            st.dataframe(rejected, use_container_width=True)
+        else:
+            st.info("⏱ Bu yöntemde 'rejected' üretilmez (boş döner).")
+
+    except Exception as e:
+        st.error(f"❌ Hata: {e}")
+
+    
