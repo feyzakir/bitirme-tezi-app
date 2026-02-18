@@ -138,3 +138,4 @@ def mdd_algorithm(df: pd.DataFrame):
         t += float(job["ProcessTime"])
         remaining = remaining.drop(index=idx)
     return pd.DataFrame(seq).reset_index(drop=True), pd.DataFrame()
+
