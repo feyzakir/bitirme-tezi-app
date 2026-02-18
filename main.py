@@ -170,9 +170,8 @@ if df is not None and not df.empty:
                 st.dataframe(rejected, use_container_width=True)
             else:
                 st.info("⏱ Bu yöntemde 'rejected' üretilmez (boş döner).")
-git add .
 
         except Exception as e:
             st.error(f"❌ Hata: {e}")
-else:
-    st.info("Tablo yükleyin veya manuel tabloyu kaydedin. Sonra algoritma seçebilirsiniz.")
+    else:
+        st.info("Tablo yükleyin veya manuel tabloyu kaydedin. Sonra algoritma seçebilirsiniz.")
