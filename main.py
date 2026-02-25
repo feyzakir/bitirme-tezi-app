@@ -3,7 +3,7 @@ import pandas as pd
 
 from table import extract_jobs_from_image, finalize_df
 from algorithm import (
-    moore_algorithm, spt_algorithm, edd_algorithm, lpt_algorithm, fcfs_algorithm,lifo_algorithm, cr_algorithm, mdd_algorithm
+    moore_algorithm, spt_algorithm, edd_algorithm, lpt_algorithm, fcfs_algorithm,lifo_algorithm, cr_algorithm, mdd_algorithm, johnson_algorithm, smith_algorithm 
 )
 
 def total_completion_time(single_machine_df: pd.DataFrame) -> float:
@@ -73,51 +73,55 @@ if input_method == "📷 Görsel Yükle":
 elif input_method == "📝 Manuel Giriş":
     st.markdown("### 🧾 Excel Formatında Tablo Oluştur / Düzenle")
 
-    # İlk açılış şablonu (sıfırdan tablo)
+    table_mode = st.selectbox(
+        "Tablo türü seçin:",
+        ["Tek Makine (ProcessTime/DeliveryTime)",
+         "İki Makine (Johnson: M1Time/M2Time)"]
+    )
+
+    # ✅ Mod değişimini takip et (ilk kez yoksa oluştur)
+    if "table_mode_prev" not in st.session_state:
+        st.session_state.table_mode_prev = table_mode
+
+    # ✅ Mod değiştiyse tabloyu şablona çevir
+    if st.session_state.table_mode_prev != table_mode:
+        st.session_state.manual_df = None
+        st.session_state.table_mode_prev = table_mode
+
+    # İlk açılış / mod değişimi sonrası şablon
     if st.session_state.manual_df is None:
-        st.session_state.manual_df = pd.DataFrame({
-            "Job": [1, 2, 3],
-            "DeliveryTime": [10, 20, 15],
-            "ProcessTime": [5, 7, 3],
-        })
-
-    col1, col2 = st.columns([1, 1])
-
-    with col1:
-        if st.button("➕ Yeni Boş Satır Ekle"):
-            new_row = {c: None for c in st.session_state.manual_df.columns}
-            st.session_state.manual_df = pd.concat(
-                [st.session_state.manual_df, pd.DataFrame([new_row])],
-                ignore_index=True
-            )
-
-    with col2:
-        if st.button("🧹 Manuel Tabloyu Sıfırla (Şablon)"):
+        if table_mode.startswith("İki Makine"):
+            st.session_state.manual_df = pd.DataFrame({
+                "Job": ["A", "B", "C", "D", "E"],
+                "M1Time": [35, 15, 60, 50, 30],
+                "M2Time": [40, 20, 25, 45, 20],
+            })
+        else:
             st.session_state.manual_df = pd.DataFrame({
                 "Job": [1, 2, 3],
                 "DeliveryTime": [10, 20, 15],
                 "ProcessTime": [5, 7, 3],
             })
-            st.rerun()
 
     edited_manual = st.data_editor(
         st.session_state.manual_df,
-        num_rows="dynamic",              # ✅ sınırsız satır
+        num_rows="dynamic",
         use_container_width=True,
         key="editor_manual"
     )
 
     if st.button("✅ Manuel Tabloyu Kaydet ve Kullan"):
+        # ⚠️ finalize_df büyük ihtimalle DeliveryTime/ProcessTime istiyor.
+        # Johnson modunda finalize_df boş dönebilir.
         fixed = finalize_df(edited_manual)
+
         if fixed.empty:
-            st.error("⚠️ Tablo geçersiz. DeliveryTime ve ProcessTime dolu olmalı.")
+            st.error("⚠️ Tablo geçersiz. (Tek makinede DeliveryTime/ProcessTime, Johnson’da M1Time/M2Time dolu olmalı.)")
         else:
             st.session_state.manual_df = edited_manual.copy()
             st.session_state.df = fixed
             st.success("✅ Manuel tablo kaydedildi ve algoritmalara hazır.")
             st.dataframe(fixed, use_container_width=True)
-
-
 # =========================================================
 # 3) ALGORİTMALAR
 # =========================================================
@@ -137,6 +141,8 @@ if df is not None and not df.empty:
         "Last In First Out (Son Gelen İlk Çıkar) - LIFO": "LIFO",
         "Critical Ratio (Kritik Oran) - CR": "CR",
         "Modified Due Date (Modifiye Teslim Tarihi) - MDD": "MDD",
+        "Johnson Algoritması (2 Makine | Makespan Min) - JOHNSON": "JOHNSON",
+        "Smith Algoritması (Tmax=0 | Ortalama Completion Min) - SMITH": "SMITH",
     }
 
     label = st.selectbox("Algoritma", list(algo_map.keys()))
@@ -150,27 +156,39 @@ if df is not None and not df.empty:
             rejected = pd.DataFrame()
 
             if algo == "MOORE":
-                optimal, rejected = moore_algorithm(df)
-                final_df = pd.concat([optimal, rejected], ignore_index=True)
-
+                optimal, rejected, final_df = moore_algorithm(df)
                 st.success("✅ Moore sıralaması hesaplandı!")
                 st.subheader("📌 Moore Final Sıra (Optimal + Rejected)")
                 st.dataframe(final_df, use_container_width=True)
-
                 if not rejected.empty:
                     st.subheader("❌ Zamanında Yetişmeyen/Çıkarılan İşler (Rejected)")
                     st.dataframe(rejected, use_container_width=True)
-
                 if save_result:
                     sumC = total_completion_time(final_df)
-                    st.session_state.results[algo] = {
-                        "label": label,
-                        "df": final_df.copy(),
-                        "sumC": sumC
-                    }
+                    st.session_state.results[algo] = {"label": label, "df": final_df.copy(), "sumC": sumC}
                     st.success(f"✅ Kaydedildi: {label} | Toplam Completion (∑Ci) = {sumC:.2f}")
+                st.stop()
+            elif algo == "JOHNSON":
+                seq_df, schedule_df, makespan, total_wait = johnson_algorithm(df)
+
+                st.success("✅ Johnson sıralaması hesaplandı!")
+                st.subheader("📌 Johnson Optimal Sıra")
+                st.write(" - ".join(seq_df["Job"].astype(str).tolist()))
+
+                st.subheader("📌 Johnson Çözüm Tablosu")
+                st.dataframe(schedule_df, use_container_width=True)
+
+                c1, c2 = st.columns(2)
+                c1.metric("Makespan (Cmax)", f"{makespan:.2f}")
+                c2.metric("Toplam Atıl Süre (M2 Bekleme)", f"{total_wait:.2f}")
+
+                if save_result:
+        # Karşılaştırmada Johnson için Cmax saklıyoruz
+                    st.session_state.results[algo] = {"label": label, "df": schedule_df.copy(), "sumC": makespan}
+                    st.success(f"✅ Kaydedildi: {label} | Makespan (Cmax) = {makespan:.2f}")
 
                 st.stop()
+            
 
             elif algo == "SPT":
                 optimal, rejected = spt_algorithm(df)
@@ -186,6 +204,8 @@ if df is not None and not df.empty:
                 optimal, rejected = cr_algorithm(df)
             elif algo == "MDD":
                 optimal, rejected = mdd_algorithm(df)
+            elif algo == "SMITH":
+                optimal, rejected = smith_algorithm(df)
             else:
                 raise ValueError(f"Bilinmeyen algoritma kodu: {algo}")
 

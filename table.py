@@ -15,10 +15,9 @@ def _normalize_header(s: str) -> str:
 
 def _finalize_df(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Tek-makine için normalize:
-    - Kolon isimlerini eşleştir (Job, ProcessTime, DeliveryTime)
-    - Sayısala çevir
-    - Boş/NaN satırları temizle
+    Normalize / temizle:
+    - Tek makine: Job, ProcessTime, DeliveryTime
+    - Johnson (2 makine): Job, M1Time, M2Time
     """
     if df is None or df.empty:
         return pd.DataFrame()
@@ -26,38 +25,73 @@ def _finalize_df(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df.columns = [str(c).strip() for c in df.columns]
 
+    # 1) Kolon isimlerini normalize ederek rename haritası oluştur
     rename = {}
     for c in df.columns:
         k = _normalize_header(c)
+
+        # Job
         if k in {"job", "is", "isno", "jobid", "id"}:
             rename[c] = "Job"
-        elif k in {"processtime", "ptime", "sure", "islemsuresi", "p"}:
+
+        # Tek makine
+        elif k in {"processtime", "ptime", "sure", "islemsuresi"}:
             rename[c] = "ProcessTime"
-        elif k in {"deliverytime", "duedate", "due", "teslimtarihi", "teslim", "d"}:
+        elif k in {"deliverytime", "duedate", "due", "teslimtarihi", "teslim"}:
             rename[c] = "DeliveryTime"
+
+        # Johnson 2 makine: M1/M2
+        elif k in {"m1time", "m1", "makine1", "machine1", "p", "pisirme", "firin"}:
+            rename[c] = "M1Time"
+        elif k in {"m2time", "m2", "makine2", "machine2", "s", "susleme", "dekor"}:
+            rename[c] = "M2Time"
 
     if rename:
         df = df.rename(columns=rename)
 
-    # minimum kolon
-    if "ProcessTime" not in df.columns or "DeliveryTime" not in df.columns:
+    # 2) Johnson mı, tek makine mi?
+    has_single = ("ProcessTime" in df.columns) and ("DeliveryTime" in df.columns)
+    has_johnson = ("M1Time" in df.columns) and ("M2Time" in df.columns)
+
+    if not has_single and not has_johnson:
         return pd.DataFrame()
 
+    # 3) Job yoksa ekle (string olsun; A,B,C gibi değerleri bozmayalım)
     if "Job" not in df.columns:
         df.insert(0, "Job", list(range(1, len(df) + 1)))
 
-    # sayısallaştır
+    # Job'u metin gibi sakla (Johnson'da A,B,C var)
+    df["Job"] = df["Job"].astype(str).str.strip()
+    df.loc[df["Job"].isin(["", "nan", "None"]), "Job"] = None
+
+    # boş Job'lara otomatik numara bas
+    if df["Job"].isna().any():
+        fill_vals = [str(i) for i in range(1, len(df) + 1)]
+        df.loc[df["Job"].isna(), "Job"] = pd.Series(fill_vals)[df["Job"].isna()].values
+
+    # 4) Modlara göre numeric + dropna
+    if has_johnson and not has_single:
+        # Johnson modu
+        df["M1Time"] = pd.to_numeric(df["M1Time"], errors="coerce")
+        df["M2Time"] = pd.to_numeric(df["M2Time"], errors="coerce")
+        df = df.dropna(subset=["M1Time", "M2Time"]).reset_index(drop=True)
+        return df[["Job", "M1Time", "M2Time"]].reset_index(drop=True)
+
+    if has_single and not has_johnson:
+        # Tek makine modu
+        df["ProcessTime"] = pd.to_numeric(df["ProcessTime"], errors="coerce")
+        df["DeliveryTime"] = pd.to_numeric(df["DeliveryTime"], errors="coerce")
+        df = df.dropna(subset=["ProcessTime", "DeliveryTime"]).reset_index(drop=True)
+        return df[["Job", "DeliveryTime", "ProcessTime"]].reset_index(drop=True)
+
+    # 5) İkisi birden varsa: kullanıcıya sürpriz olmasın diye TEK MAKİNE döndür
+    # (İstersen burada Johnson'ı tercih ettirebiliriz.)
     df["ProcessTime"] = pd.to_numeric(df["ProcessTime"], errors="coerce")
     df["DeliveryTime"] = pd.to_numeric(df["DeliveryTime"], errors="coerce")
-
-    # zorunlu kolonlar boş olmasın
     df = df.dropna(subset=["ProcessTime", "DeliveryTime"]).reset_index(drop=True)
+    return df[["Job", "DeliveryTime", "ProcessTime"]].reset_index(drop=True)
 
-    # Job integer yap
-    df["Job"] = pd.to_numeric(df["Job"], errors="coerce")
-    df["Job"] = df["Job"].fillna(pd.Series(range(1, len(df) + 1))).astype(int)
 
-    return df
 def finalize_df(df: pd.DataFrame) -> pd.DataFrame:
     return _finalize_df(df)
 # =========================================================
