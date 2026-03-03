@@ -25,3 +25,6 @@ opencv-python-headless
 streamlit
 pandas
 numpy
+openpyxl
+xlsxwriter
+Pillow
