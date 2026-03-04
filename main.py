@@ -473,7 +473,7 @@ if st.button("🚀 Optimum Tabloyu Hesapla"):
                     "df": optimal.copy(),
                     "sumC": Lmax
                 }
-                st.success(f"✅ Kaydedildi: {label} | Lmax = {Lmax:.2f}")
+                
 
             st.stop()
 
