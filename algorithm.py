@@ -512,3 +512,130 @@ def ws_srit(df: pd.DataFrame):
     # SRIT: remaining idle time (B-A) en küçük olan önce
     seq = df.sort_values(by="RemainingIdleTime", ascending=True)
     return workstation_schedule_and_metrics(seq)
+
+# =========================================================
+# Lawler (1|prec|Lmax) - Backward scheduling
+# (hocanın slaytındaki örnek mantığı: sink işler arasından Di en büyük seçilir)
+# =========================================================
+
+def _parse_precedence(df: pd.DataFrame):
+    """
+    Öncelik kısıtlarını df içinden okur.
+    Beklenen sütun: 'Predecessors'
+      - Her satırda o işin öncülleri yazılır (virgülle):
+        Örn:  J2 satırında Predecessors="J1"   -> J1 -> J2
+             J3 satırında Predecessors="J2"   -> J2 -> J3
+             J5 satırında Predecessors="J4"   -> J4 -> J5
+             J6 satırında Predecessors="J4"   -> J4 -> J6
+
+    Sütun yoksa: precedence yok kabul edilir.
+    Dönen:
+      succ: {job: set(successors)}
+      pred: {job: set(predecessors)}
+    """
+    jobs = df["Job"].astype(str).tolist()
+    succ = {j: set() for j in jobs}
+    pred = {j: set() for j in jobs}
+
+    if "Predecessors" not in df.columns:
+        return succ, pred
+
+    raw = df["Predecessors"]
+
+    for i, job in enumerate(jobs):
+        cell = raw.iloc[i]
+        if pd.isna(cell):
+            continue
+        txt = str(cell).strip()
+        if txt == "" or txt.lower() in {"nan", "none"}:
+            continue
+
+        # virgül / noktalı virgül / boşluk ayracı tolerans
+        parts = [p.strip() for p in txt.replace(";", ",").split(",")]
+        parts = [p for p in parts if p != ""]
+
+        for pjob in parts:
+            # sadece listedeki işleri dikkate al
+            if pjob in pred:
+                pred[job].add(pjob)
+                succ[pjob].add(job)
+
+    return succ, pred
+
+
+def lawler_algorithm(df: pd.DataFrame):
+    """
+    Lawler Algoritması (1|prec|Lmax)
+    - Geriye doğru yerleştirir (sona doğru seçerek)
+    - Her adımda 'son yapılabilir' (remaining içinde successor'ı olmayan) işler arasından
+      DeliveryTime (Di) en büyük olan seçilir.
+      (slayttaki min(T - Di) ile aynı)
+
+    Gerekli kolonlar:
+      - DeliveryTime (Di)
+      - ProcessTime  (Pi)
+    Opsiyonel:
+      - Predecessors (öncül listesi)
+
+    Dönen:
+      optimal_df, rejected_df (boş)
+    """
+    df = df.copy()
+    _require_cols(df, ["DeliveryTime", "ProcessTime"], "Lawler")
+    df = _ensure_job(df)
+    df = _to_numeric(df, ["DeliveryTime", "ProcessTime"])
+    df = df.dropna(subset=["DeliveryTime", "ProcessTime"]).reset_index(drop=True)
+
+    # Job'ları string karşılaştırmada stabil olsun diye burada string olarak kullanıyoruz
+    df["Job"] = df["Job"].astype(str)
+
+    succ, pred = _parse_precedence(df)
+
+    remaining = df.copy()
+    remaining_jobs = set(remaining["Job"].tolist())
+
+    # sona koyduklarımızı burada biriktirip en son ters çevireceğiz
+    placed_from_right = []
+    rejected = []
+
+    while len(remaining) > 0:
+        # sink işler: remaining içinde successor'ı olmayanlar
+        sinks = []
+        for j in remaining["Job"].tolist():
+            # j'nin successor'larından remaining içinde olan var mı?
+            has_succ_in_remaining = any((s in remaining_jobs) for s in succ.get(j, set()))
+            if not has_succ_in_remaining:
+                sinks.append(j)
+
+        if not sinks:
+            # Döngü/çakışan precedence (cycle) gibi bir şey var -> patlamasın
+            # En büyük due date'i seçip devam edelim, ama rejected'a da not düşelim
+            idx = remaining["DeliveryTime"].astype(float).idxmax()
+            chosen = remaining.loc[idx].to_dict()
+            rejected.append(chosen)
+        else:
+            cand = remaining[remaining["Job"].isin(sinks)].copy()
+            # hocanın mantığı: min(T - Di) => Di max
+            max_due = float(cand["DeliveryTime"].astype(float).max())
+            cand2 = cand[cand["DeliveryTime"].astype(float) == max_due]
+
+            # tie-break: ProcessTime küçük olanı seçelim (stabilite için)
+            if len(cand2) > 1:
+                idx = cand2["ProcessTime"].astype(float).idxmin()
+            else:
+                idx = cand2.index[0]
+
+            chosen = remaining.loc[idx].to_dict()
+
+        placed_from_right.append(chosen)
+
+        # remove chosen
+        chosen_job = str(chosen["Job"])
+        remaining = remaining[remaining["Job"] != chosen_job].reset_index(drop=True)
+        remaining_jobs.discard(chosen_job)
+
+    # sağdan sola seçtik -> ters çevirince final sıra (soldan sağa)
+    optimal_df = pd.DataFrame(list(reversed(placed_from_right))).reset_index(drop=True)
+    rejected_df = pd.DataFrame(rejected).reset_index(drop=True)
+
+    return optimal_df, rejected_df
