@@ -1,10 +1,11 @@
 import streamlit as st
 import pandas as pd
 import io
+import numpy as np
 
 from table import extract_jobs_from_image, finalize_df
 from algorithm import (
-    moore_algorithm, spt_algorithm, edd_algorithm, lpt_algorithm, fcfs_algorithm,lifo_algorithm, cr_algorithm, mdd_algorithm, johnson_algorithm, johnson_3machine_algorithm, smith_algorithm,ws_fifo, ws_edd, ws_spt, ws_lpt, ws_lifo, ws_srit 
+    moore_algorithm, spt_algorithm, edd_algorithm, lpt_algorithm, fcfs_algorithm,lifo_algorithm, cr_algorithm, mdd_algorithm, johnson_algorithm, johnson_3machine_algorithm, smith_algorithm,ws_fifo, ws_edd, ws_spt, ws_lpt, ws_lifo, ws_srit, lawler_algorithm
 )
 
 def total_completion_time(single_machine_df: pd.DataFrame) -> float:
@@ -189,6 +190,7 @@ elif input_method == "📝 Manuel Giriş":
         "Tablo türü seçin:",
         [
             "Tek Makine (ProcessTime/DeliveryTime)",
+            "Tek Makine + Öncelik (Lawler)",
             "İki Makine (Johnson: 2 Makine)",
             "Üç Makine (Johnson-3M: 3 Makine)",
             "Workstation (Received/Process/RemainingDue)",
@@ -228,7 +230,19 @@ elif input_method == "📝 Manuel Giriş":
         })
 
         else:
-            st.session_state.manual_df = pd.DataFrame({
+    # Tek makine şablonları
+            if table_mode.startswith("Tek Makine + Öncelik"):
+        # Lawler örneği (hocanın slaytına benzer)
+                st.session_state.manual_df = pd.DataFrame({
+                "Job": ["J1", "J2", "J3", "J4", "J5", "J6"],
+                "DeliveryTime": [3, 6, 9, 7, 11, 7],
+                "ProcessTime": [2, 3, 4, 3, 2, 1],
+            # Bu işten önce yapılması gereken işler (virgülle yazılabilir)
+                "Predecessors": ["", "J1", "J2", "", "J4", "J4"],
+        })
+            else:
+        # Normal tek makine (precedence yok)
+                st.session_state.manual_df = pd.DataFrame({
                 "Job": [1, 2, 3],
                 "DeliveryTime": [10, 20, 15],
                 "ProcessTime": [5, 7, 3],
@@ -243,19 +257,36 @@ elif input_method == "📝 Manuel Giriş":
     )
 
     # ✅ BUTON MUTLAKA BURADA OLMALI (edited_manual'dan sonra)
-    if st.button("✅ Manuel Tabloyu Kaydet ve Kullan"):
-        if table_mode.startswith(("İki Makine", "Üç Makine", "Workstation")):
-            fixed = edited_manual.copy()
-        else:
-            fixed = finalize_df(edited_manual)
+if st.button("✅ Manuel Tabloyu Kaydet ve Kullan"):
 
-        if fixed is None or fixed.empty:
-            st.error("⚠️ Tablo geçersiz. Lütfen gerekli sütunları doldurun.")
-        else:
-            st.session_state.manual_df = edited_manual.copy()
-            st.session_state.df = fixed
-            st.success("✅ Manuel tablo kaydedildi ve algoritmalara hazır.")
-            st.dataframe(fixed, use_container_width=True)
+    # Johnson ve Workstation tabloları
+    if table_mode.startswith(("İki Makine", "Üç Makine", "Workstation")):
+        fixed = edited_manual.copy()
+
+    # Lawler modu (precedence içeren)
+    elif table_mode.startswith("Tek Makine + Öncelik"):
+        fixed = edited_manual.copy()
+
+        # sayısal kolonları temizle
+        fixed["DeliveryTime"] = pd.to_numeric(fixed["DeliveryTime"], errors="coerce")
+        fixed["ProcessTime"] = pd.to_numeric(fixed["ProcessTime"], errors="coerce")
+
+        fixed = fixed.dropna(subset=["DeliveryTime", "ProcessTime"]).reset_index(drop=True)
+
+    # Normal tek makine (SPT / EDD / LPT vs)
+    else:
+        fixed = finalize_df(edited_manual)
+
+    # Tablo kontrolü
+    if fixed is None or fixed.empty:
+        st.error("⚠️ Tablo geçersiz. Lütfen gerekli sütunları doldurun.")
+
+    else:
+        st.session_state.manual_df = edited_manual.copy()
+        st.session_state.df = fixed
+
+        st.success("✅ Manuel tablo kaydedildi ve algoritmalara hazır.")
+        st.dataframe(fixed, use_container_width=True)
 # =========================================================
 # 3) ALGORİTMALAR
 # =========================================================
@@ -284,173 +315,213 @@ if df is not None and not df.empty:
         "Workstation - LPT (Longest processing time first)": "WS_LPT",
         "Workstation - LIFO (Last come first served)": "WS_LIFO",
         "Workstation - SRIT (Shortest remaining idle time first)": "WS_SRIT",
+        "Lawler Algoritması (1|prec|Lmax | Max Gecikme Min) - LAWLER": "LAWLER",
     }
 
     label = st.selectbox("Algoritma", list(algo_map.keys()))
     algo = algo_map[label]
 
     save_result = st.checkbox("✅ Bu algoritma sonucunu karşılaştırma için kaydet", value=True)
+if st.button("🚀 Optimum Tabloyu Hesapla"):
+    try:
+        optimal = None
+        rejected = pd.DataFrame()
 
-    if st.button("🚀 Optimum Tabloyu Hesapla"):
-        try:
-            optimal = None
-            rejected = pd.DataFrame()
-
-            if algo == "MOORE":
-                optimal, rejected, final_df = moore_algorithm(df)
-                st.success("✅ Moore sıralaması hesaplandı!")
-                st.subheader("📌 Moore Final Sıra (Optimal + Rejected)")
-                st.dataframe(final_df, use_container_width=True)
-                if not rejected.empty:
-                    st.subheader("❌ Zamanında Yetişmeyen/Çıkarılan İşler (Rejected)")
-                    st.dataframe(rejected, use_container_width=True)
-                if save_result:
-                    sumC = makespan(final_df)
-                    st.session_state.results[algo] = {"label": label, "df": final_df.copy(), "sumC": sumC}
-                    st.success(f"✅ Kaydedildi: {label} | Toplam Completion (∑Ci) = {sumC:.2f}")
-                st.stop()
-            elif algo == "JOHNSON":
-                required_cols = {"Machine1 Process Time", "Machine2 Process Time"}
-                if not required_cols.issubset(set(df.columns)):
-                    st.error(
-            "❌ Johnson (2 Makine) için tablo sütunları eksik.\n\n"
-            "Gerekli sütunlar:\n"
-            "- Machine1 Process Time\n"
-            "- Machine2 Process Time\n\n"
-            "Lütfen 'İki Makine (Johnson: 2 Makine)' tablosunu seçip kaydedin."
-        )
-                    st.stop()
-
-                res = johnson_algorithm(df)
-                if res is None:
-                    st.error("❌ Johnson algoritması sonuç üretmedi (None döndü). Tablo formatını kontrol edin.")
-                    st.stop()
-
-                seq_df, schedule_df, cmax, total_wait = res  # ✅ makespan ismini ezmiyoruz
-
-                st.success("✅ Johnson sıralaması hesaplandı!")
-                st.subheader("📌 Johnson Optimal Sıra")
-                st.write(" - ".join(seq_df["Job"].astype(str).tolist()))
-
-                st.subheader("📌 Johnson Çözüm Tablosu")
-                st.dataframe(schedule_df, use_container_width=True)
-
-                c1, c2 = st.columns(2)
-                c1.metric("Makespan (Cmax)", f"{cmax:.2f}")
-                c2.metric("Toplam Atıl Süre (M2 Bekleme)", f"{total_wait:.2f}")
-                if save_result:
-                    st.session_state.results[algo] = {"label": label, "df": schedule_df.copy(), "sumC": cmax}
-                    st.success(f"✅ Kaydedildi: {label} | Makespan (Cmax) = {cmax:.2f}")
-                render_comparison_panel()
-                st.stop()
-                
-            elif algo == "JOHNSON3":
-                seq_df, schedule_df, makespan, idle_m2, idle_m3 = johnson_3machine_algorithm(df)
-
-                st.success("✅ Johnson (3 Makine) sıralaması hesaplandı!")
-                st.subheader("📌 Johnson-3M Optimal Sıra")
-                st.write(" - ".join(seq_df["Job"].astype(str).tolist()))
-                st.subheader("📌 Johnson-3M Çözüm Tablosu")
-                st.dataframe(schedule_df, use_container_width=True)
-                c1, c2, c3 = st.columns(3)
-                c1.metric("Makespan (Cmax)", f"{makespan:.2f}")
-                c2.metric("M2 Toplam Atıl Süre", f"{idle_m2:.2f}")
-                c3.metric("M3 Toplam Atıl Süre", f"{idle_m3:.2f}")
-
-                if save_result:
-                    st.session_state.results[algo] = {"label": label, "df": schedule_df.copy(), "sumC": makespan}
-                    st.success(f"✅ Kaydedildi: {label} | Makespan (Cmax) = {makespan:.2f}")
-                st.stop()
-            
-
-            elif algo == "SPT":
-                optimal, rejected = spt_algorithm(df)
-            elif algo.startswith("WS_"):
-                # 6 kural -> schedule + metrik
-                if algo == "WS_FIFO":
-                    schedule_df, avg_delay, avg_lead, delayed_jobs = ws_fifo(df)
-                    rule_name = "FIFO"
-                elif algo == "WS_EDD":
-                    schedule_df, avg_delay, avg_lead, delayed_jobs = ws_edd(df)
-                    rule_name = "EDD"
-                elif algo == "WS_SPT":
-                    schedule_df, avg_delay, avg_lead, delayed_jobs = ws_spt(df)
-                    rule_name = "SPT"
-                elif algo == "WS_LPT":
-                    schedule_df, avg_delay, avg_lead, delayed_jobs = ws_lpt(df)
-                    rule_name = "LPT"
-                elif algo == "WS_LIFO":
-                    schedule_df, avg_delay, avg_lead, delayed_jobs = ws_lifo(df)
-                    rule_name = "LIFO"
-                elif algo == "WS_SRIT":
-                    schedule_df, avg_delay, avg_lead, delayed_jobs = ws_srit(df)
-                    rule_name = "SRIT"
-                else:
-                    raise ValueError("Bilinmeyen Workstation kuralı")
-
-                st.success(f"✅ Workstation ({rule_name}) sıralaması hesaplandı!")
-                st.subheader("📌 İş Sırası")
-                order_col = "Order" if "Order" in schedule_df.columns else "Job"
-                st.write(" - ".join(schedule_df[order_col].astype(str).tolist()))
-                st.subheader("📌 Çözüm Tablosu")
-                st.dataframe(schedule_df, use_container_width=True)
-
-                c1, c2, c3 = st.columns(3)
-                c1.metric("Average Delay (days)", f"{avg_delay:.2f}")
-                c2.metric("Average Lead Time (days)", f"{avg_lead:.2f}")
-                c3.metric("Number of Delayed Jobs", f"{delayed_jobs:d}")
-
-                if save_result:
-                    # Karşılaştırma için 3 metriği sakla
-                    st.session_state.results[algo] = {
-                        "label": label,
-                        "df": schedule_df.copy(),
-                        "avg_delay": round(avg_delay, 2),
-                        "avg_lead": round(avg_lead, 2),
-                        "delayed_jobs": delayed_jobs,
-                        "sumC": avg_lead   }
-                    st.success(f"✅ Kaydedildi: {label}")
-                render_comparison_panel()
-                st.stop()
-                
-            elif algo == "EDD":
-                optimal, rejected = edd_algorithm(df)
-            elif algo == "LPT":
-                optimal, rejected = lpt_algorithm(df)
-            elif algo == "FIFO":
-                optimal, rejected = fcfs_algorithm(df)
-            elif algo == "LIFO":
-                optimal, rejected = lifo_algorithm(df)
-            elif algo == "CR":
-                optimal, rejected = cr_algorithm(df)
-            elif algo == "MDD":
-                optimal, rejected = mdd_algorithm(df)
-            elif algo == "SMITH":
-                optimal, rejected = smith_algorithm(df)
-            else:
-                raise ValueError(f"Bilinmeyen algoritma kodu: {algo}")
-
-            st.success("✅ Optimum sıralama hesaplandı!")
-            st.subheader("📌 Optimum Sıralama Tablosu")
-            st.dataframe(optimal, use_container_width=True)
-
-            if rejected is not None and not rejected.empty:
-                st.subheader("❌ Rejected")
+        if algo == "MOORE":
+            optimal, rejected, final_df = moore_algorithm(df)
+            st.success("✅ Moore sıralaması hesaplandı!")
+            st.subheader("📌 Moore Final Sıra (Optimal + Rejected)")
+            st.dataframe(final_df, use_container_width=True)
+            if not rejected.empty:
+                st.subheader("❌ Zamanında Yetişmeyen/Çıkarılan İşler (Rejected)")
                 st.dataframe(rejected, use_container_width=True)
-            else:
-                st.info("⏱ Bu yöntemde 'rejected' üretilmez (boş döner).")
+            if save_result:
+                sumC = makespan(final_df)
+                st.session_state.results[algo] = {"label": label, "df": final_df.copy(), "sumC": sumC}
+                st.success(f"✅ Kaydedildi: {label} | Toplam Completion (∑Ci) = {sumC:.2f}")
+            st.stop()
+
+        elif algo == "JOHNSON":
+            required_cols = {"Machine1 Process Time", "Machine2 Process Time"}
+            if not required_cols.issubset(set(df.columns)):
+                st.error(
+                    "❌ Johnson (2 Makine) için tablo sütunları eksik.\n\n"
+                    "Gerekli sütunlar:\n"
+                    "- Machine1 Process Time\n"
+                    "- Machine2 Process Time\n\n"
+                    "Lütfen 'İki Makine (Johnson: 2 Makine)' tablosunu seçip kaydedin."
+                )
+                st.stop()
+
+            res = johnson_algorithm(df)
+            if res is None:
+                st.error("❌ Johnson algoritması sonuç üretmedi (None döndü). Tablo formatını kontrol edin.")
+                st.stop()
+
+            seq_df, schedule_df, cmax, total_wait = res  # ✅ makespan ismini ezmiyoruz
+
+            st.success("✅ Johnson sıralaması hesaplandı!")
+            st.subheader("📌 Johnson Optimal Sıra")
+            st.write(" - ".join(seq_df["Job"].astype(str).tolist()))
+
+            st.subheader("📌 Johnson Çözüm Tablosu")
+            st.dataframe(schedule_df, use_container_width=True)
+
+            c1, c2 = st.columns(2)
+            c1.metric("Makespan (Cmax)", f"{cmax:.2f}")
+            c2.metric("Toplam Atıl Süre (M2 Bekleme)", f"{total_wait:.2f}")
+            if save_result:
+                st.session_state.results[algo] = {"label": label, "df": schedule_df.copy(), "sumC": cmax}
+                st.success(f"✅ Kaydedildi: {label} | Makespan (Cmax) = {cmax:.2f}")
+            render_comparison_panel()
+            st.stop()
+
+        elif algo == "JOHNSON3":
+            seq_df, schedule_df, makespan, idle_m2, idle_m3 = johnson_3machine_algorithm(df)
+
+            st.success("✅ Johnson (3 Makine) sıralaması hesaplandı!")
+            st.subheader("📌 Johnson-3M Optimal Sıra")
+            st.write(" - ".join(seq_df["Job"].astype(str).tolist()))
+            st.subheader("📌 Johnson-3M Çözüm Tablosu")
+            st.dataframe(schedule_df, use_container_width=True)
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Makespan (Cmax)", f"{makespan:.2f}")
+            c2.metric("M2 Toplam Atıl Süre", f"{idle_m2:.2f}")
+            c3.metric("M3 Toplam Atıl Süre", f"{idle_m3:.2f}")
 
             if save_result:
-                sumC = total_completion_time(optimal)
+                st.session_state.results[algo] = {"label": label, "df": schedule_df.copy(), "sumC": makespan}
+                st.success(f"✅ Kaydedildi: {label} | Makespan (Cmax) = {makespan:.2f}")
+            st.stop()
+
+        elif algo == "SPT":
+            optimal, rejected = spt_algorithm(df)
+
+        elif algo.startswith("WS_"):
+            # 6 kural -> schedule + metrik
+            if algo == "WS_FIFO":
+                schedule_df, avg_delay, avg_lead, delayed_jobs = ws_fifo(df)
+                rule_name = "FIFO"
+            elif algo == "WS_EDD":
+                schedule_df, avg_delay, avg_lead, delayed_jobs = ws_edd(df)
+                rule_name = "EDD"
+            elif algo == "WS_SPT":
+                schedule_df, avg_delay, avg_lead, delayed_jobs = ws_spt(df)
+                rule_name = "SPT"
+            elif algo == "WS_LPT":
+                schedule_df, avg_delay, avg_lead, delayed_jobs = ws_lpt(df)
+                rule_name = "LPT"
+            elif algo == "WS_LIFO":
+                schedule_df, avg_delay, avg_lead, delayed_jobs = ws_lifo(df)
+                rule_name = "LIFO"
+            elif algo == "WS_SRIT":
+                schedule_df, avg_delay, avg_lead, delayed_jobs = ws_srit(df)
+                rule_name = "SRIT"
+            else:
+                raise ValueError("Bilinmeyen Workstation kuralı")
+
+            st.success(f"✅ Workstation ({rule_name}) sıralaması hesaplandı!")
+            st.subheader("📌 İş Sırası")
+            order_col = "Order" if "Order" in schedule_df.columns else "Job"
+            st.write(" - ".join(schedule_df[order_col].astype(str).tolist()))
+            st.subheader("📌 Çözüm Tablosu")
+            st.dataframe(schedule_df, use_container_width=True)
+
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Average Delay (days)", f"{avg_delay:.2f}")
+            c2.metric("Average Lead Time (days)", f"{avg_lead:.2f}")
+            c3.metric("Number of Delayed Jobs", f"{delayed_jobs:d}")
+
+            if save_result:
+                # Karşılaştırma için 3 metriği sakla
+                st.session_state.results[algo] = {
+                    "label": label,
+                    "df": schedule_df.copy(),
+                    "avg_delay": round(avg_delay, 2),
+                    "avg_lead": round(avg_lead, 2),
+                    "delayed_jobs": delayed_jobs,
+                    "sumC": avg_lead
+                }
+                st.success(f"✅ Kaydedildi: {label}")
+            render_comparison_panel()
+            st.stop()
+
+        elif algo == "LAWLER":
+            optimal, rejected = lawler_algorithm(df)  # ✅ önce algoritmayı çalıştır
+
+            if optimal is None or optimal.empty:
+                raise ValueError("Lawler çıktı üretmedi. Tabloyu ve Predecessors girişini kontrol et.")
+
+            # ✅ Lmax hesapla (algoritmayı bozmuyor, sadece çıktı metriği)
+            p = pd.to_numeric(optimal["ProcessTime"], errors="coerce").fillna(0).astype(float).values
+            d = pd.to_numeric(optimal["DeliveryTime"], errors="coerce").fillna(0).astype(float).values
+            C = p.cumsum()
+            L = C - d
+            Lmax = float(np.max(L)) if len(L) > 0 else float("inf")
+
+            st.success("✅ Lawler sıralaması hesaplandı!")
+            st.subheader("📌 Lawler Optimal Sıra")
+            st.write(" - ".join(optimal["Job"].astype(str).tolist()))
+            st.subheader("📌 Optimum Sıralama Tablosu")
+            st.dataframe(optimal, use_container_width=True)
+            st.metric("Lmax (Maksimum Gecikme)", f"{Lmax:.2f}")
+
+            # ✅ Kaydet: panel sumC bekliyor diye buraya Lmax yazıyoruz
+            if save_result:
                 st.session_state.results[algo] = {
                     "label": label,
                     "df": optimal.copy(),
-                    "sumC": sumC
+                    "sumC": Lmax
                 }
-                st.success(f"✅ Kaydedildi: {label} | Toplam Completion (∑Ci) = {sumC:.2f}")
+                st.success(f"✅ Kaydedildi: {label} | Lmax = {Lmax:.2f}")
 
-        except Exception as e:
-            st.error(f"❌ Hata: {e}")
+            st.stop()
+
+        elif algo == "EDD":
+            optimal, rejected = edd_algorithm(df)
+
+        elif algo == "LPT":
+            optimal, rejected = lpt_algorithm(df)
+
+        elif algo == "FIFO":
+            optimal, rejected = fcfs_algorithm(df)
+
+        elif algo == "LIFO":
+            optimal, rejected = lifo_algorithm(df)
+
+        elif algo == "CR":
+            optimal, rejected = cr_algorithm(df)
+
+        elif algo == "MDD":
+            optimal, rejected = mdd_algorithm(df)
+
+        elif algo == "SMITH":
+            optimal, rejected = smith_algorithm(df)
+
+        else:
+            raise ValueError(f"Bilinmeyen algoritma kodu: {algo}")
+
+        st.success("✅ Optimum sıralama hesaplandı!")
+        st.subheader("📌 Optimum Sıralama Tablosu")
+        st.dataframe(optimal, use_container_width=True)
+
+        if rejected is not None and not rejected.empty:
+            st.subheader("❌ Rejected")
+            st.dataframe(rejected, use_container_width=True)
+        else:
+            st.info("⏱ Bu yöntemde 'rejected' üretilmez (boş döner).")
+
+        if save_result:
+            sumC = total_completion_time(optimal)
+            st.session_state.results[algo] = {
+                "label": label,
+                "df": optimal.copy(),
+                "sumC": sumC
+            }
+            st.success(f"✅ Kaydedildi: {label} | Toplam Completion (∑Ci) = {sumC:.2f}")
+
+    except Exception as e:
+        st.error(f"❌ Hata: {e}")
 
 render_comparison_panel()
 st.subheader("Bu uygulama, bitirme projesi kapsamında geliştirilmiştir. Destekleri için değerli hocamız Dr. Öğretim Üyesi Üzeyir Pala'ya teşekkür ederiz.")
