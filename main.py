@@ -464,7 +464,7 @@ if st.button("🚀 Optimum Tabloyu Hesapla"):
             st.write(" - ".join(optimal["Job"].astype(str).tolist()))
             st.subheader("📌 Optimum Sıralama Tablosu")
             st.dataframe(optimal, use_container_width=True)
-            st.metric("Lmax (Maksimum Gecikme)", f"{Lmax:.2f}")
+            
 
             # ✅ Kaydet: panel sumC bekliyor diye buraya Lmax yazıyoruz
             if save_result:
