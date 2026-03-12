@@ -25,6 +25,7 @@ def makespan(single_machine_df: pd.DataFrame) -> float:
 
 st.set_page_config(page_title="İş Sıralama Optimizasyonu", layout="centered")
 st.title("İş Sıralama ve Üretim Planlama Aracı")
+time_unit = st.text_input("Zaman Birimi (sadece görüntü için)", value="day")
 def render_comparison_panel():
     st.markdown("---")
     st.subheader("📊 Karşılaştırma Paneli (Kaydedilen Sonuçlar)")
@@ -69,7 +70,7 @@ def render_comparison_panel():
 
             st.success(f"🏆 En iyi (en düşük ∑Ci): {best['label']}")
             st.subheader("✅ En iyi algoritmanın iş sırası sonucu")
-            st.dataframe(best["df"], use_container_width=True)
+            st.dataframe(add_time_unit_to_columns(best["df"], time_unit), use_container_width=True)
             best_code = summary.loc[0, "Kod"]
             best = st.session_state.results[best_code]
 
@@ -81,7 +82,10 @@ def render_comparison_panel():
                 best_label=best_label,
                 best_code=best_code,
                 best_score=best_score,
-                best_df=best_df
+                best_df=best_df,
+                source_df=st.session_state.df,
+                time_unit=time_unit
+                
 )
 
             st.download_button(
@@ -105,31 +109,117 @@ def safe_sheet_name(name: str) -> str:
 
 import io
 
-def build_excel_bytes_best_only(best_label: str, best_code: str, best_score: float, best_df: pd.DataFrame) -> bytes:
+def build_excel_bytes_best_only(
+    best_label: str,
+    best_code: str,
+    best_score: float,
+    best_df: pd.DataFrame,
+    source_df: pd.DataFrame,
+    time_unit: str
+) -> bytes:
     output = io.BytesIO()
 
-    # openpyxl yoksa xlsxwriter'a düş
     try:
         engine = "openpyxl"
-        import openpyxl  # noqa: F401
+        import openpyxl
+        from openpyxl.styles import Font
     except Exception:
         engine = "xlsxwriter"
 
     with pd.ExcelWriter(output, engine=engine) as writer:
-        # 1) Üstte tek satırlık özet
+        # Görünüm için birim eklenmiş kopyalar
+        source_df_display = add_time_unit_to_columns(source_df, time_unit)
+        best_df_display = add_time_unit_to_columns(best_df, time_unit)
+
+        # 1) Üst özet
         header_df = pd.DataFrame([{
-            "En iyi algoritma": best_label,
+            "En İyi Çözüm Algoritması": best_label,
             "Kod": best_code,
             "Completion (∑Ci)": best_score
         }])
         header_df.to_excel(writer, sheet_name="EnIyi", index=False, startrow=0)
 
-        # 2) Altta optimum sıralama tablosu (2 satır boşluk bırakalım)
-        start_row = len(header_df) + 3
-        best_df.to_excel(writer, sheet_name="EnIyi", index=False, startrow=start_row)
+        # 2) Soru tablosu
+        question_title_row = len(header_df) + 3
+        question_df_row = question_title_row + 1
+
+        pd.DataFrame([["Soru Tablosu"]]).to_excel(
+            writer,
+            sheet_name="EnIyi",
+            index=False,
+            header=False,
+            startrow=question_title_row
+        )
+        source_df_display.to_excel(
+            writer,
+            sheet_name="EnIyi",
+            index=False,
+            startrow=question_df_row
+        )
+
+        # 3) Optimum sıralama tablosu
+        result_title_row = question_df_row + len(source_df_display) + 3
+        result_df_row = result_title_row + 1
+
+        pd.DataFrame([["Optimum Sıralama Tablosu"]]).to_excel(
+            writer,
+            sheet_name="EnIyi",
+            index=False,
+            header=False,
+            startrow=result_title_row
+        )
+        best_df_display.to_excel(
+            writer,
+            sheet_name="EnIyi",
+            index=False,
+            startrow=result_df_row
+        )
+
+        # 4) Kalın puntolar
+        if engine == "openpyxl":
+            ws = writer.book["EnIyi"]
+            bold_font = Font(bold=True)
+
+            for cell in ws[1]:
+                cell.font = bold_font
+
+            ws["C1"].font = bold_font
+            ws["C2"].font = bold_font
+
+            ws.cell(row=question_title_row + 1, column=1).font = bold_font
+            ws.cell(row=result_title_row + 1, column=1).font = bold_font
+
+            q_header_row = question_df_row + 1
+            for cell in ws[q_header_row]:
+                cell.font = bold_font
+
+            r_header_row = result_df_row + 1
+            for cell in ws[r_header_row]:
+                cell.font = bold_font
 
     output.seek(0)
     return output.getvalue()
+
+def add_time_unit_to_columns(df: pd.DataFrame, unit: str) -> pd.DataFrame:
+    if df is None or df.empty:
+        return df
+
+    df_disp = df.copy()
+
+    rename_map = {
+        "ProcessTime": f"Process Time ({unit})",
+        "DeliveryTime": f"Delivery Time ({unit})",
+        "TimeSinceOrderReceived": f"Time Since Order Received ({unit})",
+        "TimeRemainingUntilDeliveryDate": f"Time Remaining Until Delivery Date ({unit})",
+        "RemainingIdleTime": f"Remaining Idle Time ({unit})",
+        "Start time (day)": f"Start Time ({unit})",
+        "Finish time (day)": f"Finish Time ({unit})",
+        "Delay time (day)": f"Delay Time ({unit})",
+        "Lead time (day)": f"Lead Time ({unit})",
+    }
+
+    return df_disp.rename(columns={k: v for k, v in rename_map.items() if k in df_disp.columns})
+
 # ----------------------------
 # Session State
 # ----------------------------
@@ -194,6 +284,7 @@ elif input_method == "📝 Manuel Giriş":
             "İki Makine (Johnson: 2 Makine)",
             "Üç Makine (Johnson-3M: 3 Makine)",
             "Workstation (Received/Process/RemainingDue)",
+            "Workstation (Process/Delivery Only | Received=0)",
         ]
     )
 
@@ -221,12 +312,20 @@ elif input_method == "📝 Manuel Giriş":
             "Machine2 Process Time": [40, 20, 25, 45, 20],
     })
 
-        elif table_mode.startswith("Workstation"):
+
+        elif table_mode == "Workstation (Received/Process/RemainingDue)":
             st.session_state.manual_df = pd.DataFrame({
             "Job": ["A","B","C","D","E","F"],
             "TimeSinceOrderReceived": [15,12,5,10,0,7],
             "ProcessTime": [25,16,14,10,12,16],
             "TimeRemainingUntilDeliveryDate": [29,27,68,48,80,47],
+    })
+
+        elif table_mode == "Workstation (Process/Delivery Only | Received=0)":
+            st.session_state.manual_df = pd.DataFrame({
+            "Job": [1, 2, 3, 4, 5],
+            "ProcessTime": [11, 29, 31, 1, 2],
+            "DeliveryTime": [61, 45, 31, 33, 32],
         })
 
         else:
@@ -256,12 +355,33 @@ elif input_method == "📝 Manuel Giriş":
         key="editor_manual"
     )
 
-    # ✅ BUTON MUTLAKA BURADA OLMALI (edited_manual'dan sonra)
+# ✅ BUTON MUTLAKA BURADA OLMALI (edited_manual'dan sonra)
 if st.button("✅ Manuel Tabloyu Kaydet ve Kullan"):
 
-    # Johnson ve Workstation tabloları
-    if table_mode.startswith(("İki Makine", "Üç Makine", "Workstation")):
+    # Johnson tabloları
+    if table_mode.startswith(("İki Makine", "Üç Makine")):
         fixed = edited_manual.copy()
+
+    # Mevcut workstation modu
+    elif table_mode == "Workstation (Received/Process/RemainingDue)":
+        fixed = edited_manual.copy()
+
+    # Yeni workstation modu: Process/Delivery Only | Received=0
+    elif table_mode == "Workstation (Process/Delivery Only | Received=0)":
+        fixed = edited_manual.copy()
+
+        fixed["ProcessTime"] = pd.to_numeric(fixed["ProcessTime"], errors="coerce")
+        fixed["DeliveryTime"] = pd.to_numeric(fixed["DeliveryTime"], errors="coerce")
+
+        fixed = fixed.dropna(subset=["ProcessTime", "DeliveryTime"]).reset_index(drop=True)
+
+        if "Job" not in fixed.columns:
+            fixed.insert(0, "Job", list(range(1, len(fixed) + 1)))
+
+        fixed["TimeSinceOrderReceived"] = 0
+        fixed["TimeRemainingUntilDeliveryDate"] = fixed["DeliveryTime"]
+
+        fixed = fixed[["Job", "TimeSinceOrderReceived", "ProcessTime", "TimeRemainingUntilDeliveryDate"]]
 
     # Lawler modu (precedence içeren)
     elif table_mode.startswith("Tek Makine + Öncelik"):
@@ -294,7 +414,7 @@ df = st.session_state.df
 
 if df is not None and not df.empty:
     st.subheader("📄 Kullanılacak Tablo (Son Kaydedilen)")
-    st.dataframe(df, use_container_width=True)
+    st.dataframe(add_time_unit_to_columns(df, time_unit), use_container_width=True)
 
     st.markdown("### ⚙️ Sıralama Algoritması Seçin")
     algo_map = {
@@ -463,7 +583,7 @@ if st.button("🚀 Optimum Tabloyu Hesapla"):
             st.subheader("📌 Lawler Optimal Sıra")
             st.write(" - ".join(optimal["Job"].astype(str).tolist()))
             st.subheader("📌 Optimum Sıralama Tablosu")
-            st.dataframe(optimal, use_container_width=True)
+            st.dataframe(add_time_unit_to_columns(optimal, time_unit), use_container_width=True)
             
 
             # ✅ Kaydet: panel sumC bekliyor diye buraya Lmax yazıyoruz
